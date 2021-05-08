@@ -18,7 +18,6 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import pygame
-import pdb
 
 import random
 import math
@@ -70,7 +69,7 @@ class Tetris(object):
         # Score settings
         self.score = 0
         # Remember the current speed 
-        self.speed = 5
+        self.speed = 1
         # The score level threshold
         self.score_level = constants.SCORE_LEVEL
 
@@ -151,7 +150,8 @@ class Tetris(object):
             self.print_game_over()
         # Disable the pygame stuff
         pygame.font.quit()
-        pygame.display.quit()        
+        pygame.display.quit()
+
    
     def print_status_line(self):
         """
@@ -339,6 +339,79 @@ class Tetris(object):
             blk.draw()
         # Draw the screen buffer
         pygame.display.flip()
+
+    # ==== Below starts logic added for emulating the game, used for RL ====
+
+    def step(self, action, draw_game=True):
+
+        # Generate a new block into the game if required
+        self.get_block()
+
+        # Remember the current configuration and try to
+        # apply the action
+        self.active_block.backup()
+        # Handle the events to allow pygame to handle internal actions
+        pygame.event.pump()
+
+        # TODO: Apply the action input, for now we just move down
+        self.active_block.move(0, constants.BHEIGHT)
+
+        # Border logic, check if we colide with down border or any
+        # other border. This check also includes the detection with other tetris blocks.
+        down_board = self.active_block.check_collision([self.board_down])
+        any_border = self.active_block.check_collision([self.board_left, self.board_up, self.board_right])
+        block_any = self.block_colides()
+        # Restore the configuration if any collision was detected
+        if down_board or any_border or block_any:
+            self.active_block.restore()
+        # So far so good, sample the previous state and try to move down (to detect the colision with other block).
+        # After that, detect the the insertion of new block. The block new block is inserted if we reached the boarder
+        # or we cannot move down.
+        self.active_block.backup()
+        self.active_block.move(0, constants.BHEIGHT)
+        can_move_down = not self.block_colides()
+        self.active_block.restore()
+        # We end the game if we are on the respawn and we cannot move --> bang!
+        if not can_move_down and (self.start_x == self.active_block.x and self.start_y == self.active_block.y):
+            self.game_over = True
+        # The new block is inserted if we reached down board or we cannot move down.
+        if down_board or not can_move_down:
+            # Request new block
+            self.new_block = True
+            # Detect the filled line and possibly remove the line from the
+            # screen.
+            self.detect_line()
+
+        if draw_game: self.draw_game()
+
+        done = self.done or self.game_over
+        state = self.get_game_state()
+        # return state, reward, done
+
+    def get_game_state(self):
+        pass
+
+    def init_env(self):
+        # Initialize the game (pygame, fonts)
+        pygame.init()
+        pygame.font.init()
+        self.myfont = pygame.font.SysFont(pygame.font.get_default_font(), constants.FONT_SIZE)
+        self.screen = pygame.display.set_mode((self.resx, self.resy))
+        pygame.display.set_caption("Tetris")
+        # Setup the time to fire the move event every given time
+        # self.set_move_timer()
+        # Control variables for the game. The done signal is used
+        # to control the main loop (it is set by the quit action), the game_over signal
+        # is set by the game logic and it is also used for the detection of "game over" drawing.
+        # Finally the new_block variable is used for the requesting of new tetris block.
+        self.done = False
+        self.game_over = False
+        self.new_block = True
+        # Print the initial score
+        self.print_status_line()
+
+    def reset_env(self):
+        pass
 
 if __name__ == "__main__":
     Tetris(16,30).run()

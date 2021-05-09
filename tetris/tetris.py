@@ -38,6 +38,8 @@ class Tetris(object):
             - bx - number of blocks in x
             - by - number of blocks in y
         """
+        self.bx = bx
+        self.by = by
         # Compute the resolution of the play board based on the required number of blocks.
         self.resx = bx*constants.BWIDTH+2*constants.BOARD_HEIGHT+constants.BOARD_MARGIN
         self.resy = by*constants.BHEIGHT+2*constants.BOARD_HEIGHT+constants.BOARD_MARGIN
@@ -390,42 +392,36 @@ class Tetris(object):
             # self.pause()
             self.active_block.move(0, constants.BHEIGHT)
 
+    def check_collisions(self):
+        down_board = self.active_block.check_collision([self.board_down])
+        any_border = self.active_block.check_collision([self.board_left, self.board_up, self.board_right])
+        block_any = self.block_colides()
+        return down_board, any_border, block_any
+
     def step(self, action, draw_game=True):
 
+        self.reward = 0
         # Generate a new block into the game if required
         self.get_block()
 
-        # Remember the current configuration and try to
-        # apply the action
-        self.active_block.backup()
         # Handle the events to allow pygame to handle internal actions
         pygame.event.pump()
 
-        # TODO: Apply the action input, for now we just move down
-        self.perform_action(action)
-
-        # Border logic, check if we colide with down border or any
-        # other border. This check also includes the detection with other tetris blocks.
-        down_board = self.active_block.check_collision([self.board_down])
-        any_border = self.active_block.check_collision([self.board_left, self.board_up, self.board_right])
-        block_any = self.block_colides()
-        # Restore the configuration if any collision was detected
-        if down_board or any_border or block_any:
-            self.active_block.restore()
-
-
+        # Remember the current configuration and try to
+        # Apply the action supplied by the agent
         self.active_block.backup()
-
-        self.active_block.move(0, constants.BHEIGHT)
-        down_board = self.active_block.check_collision([self.board_down])
-        any_border = self.active_block.check_collision([self.board_left, self.board_up, self.board_right])
-        block_any = self.block_colides()
-        # Restore the configuration if any collision was detected
+        self.perform_action(action)
+        down_board, any_border, block_any = self.check_collisions()
         if down_board or any_border or block_any:
             self.active_block.restore()
-        # So far so good, sample the previous state and try to move down (to detect the colision with other block).
-        # After that, detect the the insertion of new block. The block new block is inserted if we reached the boarder
-        # or we cannot move down.
+
+        # Move down by one each step - no matter what
+        self.active_block.backup()
+        self.active_block.move(0, constants.BHEIGHT)
+        down_board, any_border, block_any = self.check_collisions()
+        if down_board or any_border or block_any:
+            self.active_block.restore()
+
         self.active_block.backup()
         self.active_block.move(0, constants.BHEIGHT)
         can_move_down = not self.block_colides()
@@ -439,15 +435,23 @@ class Tetris(object):
         if down_board or not can_move_down:
             # Request new block
             self.new_block = True
+            # A block was placed --> add 1 reward point
+            self.reward += 1
             # Detect the filled line and possibly remove the line from the
             # screen.
             current_lines_cleared = self.remove_lines_emulator()
 
+            # Add the reward for lines cleared
+            self.reward += current_lines_cleared**2 * self.bx
+
         if draw_game: self.draw_game()
 
         done = self.done or self.game_over
+        if done:
+            self.reward -= 1
         state = self.get_game_state(current_lines_cleared)
-        # return state, reward, done
+
+        return state, self.reward, done
 
     def get_game_state(self, lines_cleared):
         grid = self.get_game_grid()
@@ -456,22 +460,23 @@ class Tetris(object):
         bumpiness = self.bumpiness(grid)
         return np.array([agg_height, n_holes, bumpiness, lines_cleared])
 
-    def get_game_reward(self):
-        pass
-
     def get_game_grid(self):
         x_coords = list(range(self.start_x % constants.BWIDTH, self.resx - self.start_x % constants.BWIDTH, constants.BWIDTH))
         y_coords = list(range(self.start_y % constants.BHEIGHT, self.resy - self.start_y % constants.BHEIGHT, constants.BHEIGHT))
         grid = np.zeros((len(y_coords), len(x_coords)), dtype=np.int)
-        for block in self.blk_list:
-            # Skip the active block when building the grid
-            if block.x == self.active_block.x and block.y == self.active_block.y:
-                continue
+        try:
+            for block in self.blk_list:
+                # Skip the active block when building the grid
+                if block.x == self.active_block.x and block.y == self.active_block.y:
+                    continue
 
-            for block_shape in block.shape:
-                x_grid_idx = x_coords.index(block_shape.x)
-                y_grid_idx = y_coords.index(block_shape.y)
-                grid[y_grid_idx, x_grid_idx] = 1
+                for block_shape in block.shape:
+                    x_grid_idx = x_coords.index(block_shape.x)
+                    y_grid_idx = y_coords.index(block_shape.y)
+                    grid[y_grid_idx, x_grid_idx] = 1
+        except Exception as e:
+            print(e)
+            print("uhoh", x_coords, y_coords)
 
         return grid
 
@@ -529,11 +534,18 @@ class Tetris(object):
         # Print the initial score
         self.print_status_line()
         self.lines_cleared = 0
+        self.reward = 0
+
 
 
     def reset_env(self):
         self.lines_cleared = 0
-        pass
+        self.reward = 0
+        self.blk_list.clear()
+        self.score = 0
+        self.done = False
+        self.game_over = False
+        self.new_block = True
 
 if __name__ == "__main__":
     Tetris(16,30).run()

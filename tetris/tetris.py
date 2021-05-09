@@ -23,6 +23,7 @@ import random
 import math
 import block
 import constants
+import numpy as np
 
 class Tetris(object):
     """
@@ -72,6 +73,8 @@ class Tetris(object):
         self.speed = 1
         # The score level threshold
         self.score_level = constants.SCORE_LEVEL
+        self.lines_cleared = 0
+
 
     def apply_action(self):
         """
@@ -342,6 +345,31 @@ class Tetris(object):
 
     # ==== Below starts logic added for emulating the game, used for RL ====
 
+    def remove_lines_emulator(self):
+        """
+        Detect if the line is filled. If yes, remove the line and
+        move with remaining bulding blocks to new positions.
+        """
+        # Get each shape block of the non-moving tetris block and try
+        # to detect the filled line. The number of bulding blocks is passed to the class
+        # in the init function.
+        curr_lines_cleared = 0
+        for shape_block in self.active_block.shape:
+            tmp_y = shape_block.y
+            tmp_cnt = self.get_blocks_in_line(tmp_y)
+            # Detect if the line contains the given number of blocks
+            if tmp_cnt != self.blocks_in_line:
+                continue
+            # Ok, the full line is detected!
+            self.remove_line(tmp_y)
+            # Update the score.
+            self.score += self.blocks_in_line * constants.POINT_VALUE
+            curr_lines_cleared += 1
+
+        self.lines_cleared += curr_lines_cleared
+        return curr_lines_cleared
+
+
     def step(self, action, draw_game=True):
 
         # Generate a new block into the game if required
@@ -355,7 +383,6 @@ class Tetris(object):
 
         # TODO: Apply the action input, for now we just move down
         self.active_block.move(0, constants.BHEIGHT)
-
         # Border logic, check if we colide with down border or any
         # other border. This check also includes the detection with other tetris blocks.
         down_board = self.active_block.check_collision([self.board_down])
@@ -374,22 +401,82 @@ class Tetris(object):
         # We end the game if we are on the respawn and we cannot move --> bang!
         if not can_move_down and (self.start_x == self.active_block.x and self.start_y == self.active_block.y):
             self.game_over = True
+
+        current_lines_cleared = 0
         # The new block is inserted if we reached down board or we cannot move down.
         if down_board or not can_move_down:
             # Request new block
             self.new_block = True
             # Detect the filled line and possibly remove the line from the
             # screen.
-            self.detect_line()
+            current_lines_cleared = self.remove_lines_emulator()
 
         if draw_game: self.draw_game()
 
         done = self.done or self.game_over
-        state = self.get_game_state()
+        state = self.get_game_state(current_lines_cleared)
         # return state, reward, done
 
-    def get_game_state(self):
+    def get_game_state(self, lines_cleared):
+        grid = self.get_game_grid()
+        agg_height = self.aggregate_height(grid)
+        n_holes = self.number_of_holes(grid)
+        bumpiness = self.bumpiness(grid)
+        return np.array([agg_height, n_holes, bumpiness, lines_cleared])
+
+    def get_game_reward(self):
         pass
+
+    def get_game_grid(self):
+        x_coords = list(range(self.start_x % constants.BWIDTH, self.resx - self.start_x % constants.BWIDTH, constants.BWIDTH))
+        y_coords = list(range(self.start_y % constants.BHEIGHT, self.resy - self.start_y % constants.BHEIGHT, constants.BHEIGHT))
+        grid = np.zeros((len(y_coords), len(x_coords)), dtype=np.int)
+        for block in self.blk_list:
+            # Skip the active block when building the grid
+            if block.x == self.active_block.x and block.y == self.active_block.y:
+                continue
+
+            for block_shape in block.shape:
+                x_grid_idx = x_coords.index(block_shape.x)
+                y_grid_idx = y_coords.index(block_shape.y)
+                grid[y_grid_idx, x_grid_idx] = 1
+
+        return grid
+
+    def aggregate_height(self, grid):
+        agg_height = 0
+        for x in range(grid.shape[1]):
+            top_y = np.argwhere(grid[:, x] == 1)
+            if len(top_y) != 0:
+                y_coord = top_y[0][0]
+                y_height = grid.shape[0] - y_coord
+                agg_height += y_height
+        return agg_height
+
+    def number_of_holes(self, grid):
+        n_holes = 0
+        for x in range(grid.shape[1]):
+            top_y = np.argwhere(grid[:, x] == 1)
+            if len(top_y) != 0:
+                tile_coords = top_y.flatten()
+                tile_coords = grid.shape[0] - tile_coords
+                possible_tiles = set(range(1, max(tile_coords) + 1))
+                hole_tiles = possible_tiles - set(tile_coords.tolist())
+                n_holes += len(hole_tiles)
+
+        return n_holes
+
+    def bumpiness(self, grid):
+        agg_height_arr = np.zeros(grid.shape[1])
+        for x in range(grid.shape[1]):
+            top_y = np.argwhere(grid[:, x] == 1)
+            if len(top_y) != 0:
+                y_coord = top_y[0][0]
+                y_height = grid.shape[0] - y_coord
+                agg_height_arr[x] = y_height
+
+        bumpiness = np.abs(np.diff(agg_height_arr))
+        return np.sum(bumpiness)
 
     def init_env(self):
         # Initialize the game (pygame, fonts)
@@ -409,8 +496,11 @@ class Tetris(object):
         self.new_block = True
         # Print the initial score
         self.print_status_line()
+        self.lines_cleared = 0
+
 
     def reset_env(self):
+        self.lines_cleared = 0
         pass
 
 if __name__ == "__main__":

@@ -142,6 +142,26 @@ class Block(object):
             self.diff_rotation = 90
             self._update()
 
+    def rotate_clockwise(self):
+        """
+        Setup the rotation value to 90 degrees.
+        """
+        # Setup the rotation and update coordinates of all shape blocks.
+        # The block is rotated iff the rotation is enabled
+        if self.rotate_en:
+            self.diff_rotation = 270
+            self._update()
+
+    def rotate_counter_clockwise(self):
+        """
+        Setup the rotation value to 90 degrees.
+        """
+        # Setup the rotation and update coordinates of all shape blocks.
+        # The block is rotated iff the rotation is enabled
+        if self.rotate_en:
+            self.diff_rotation = 90
+            self._update()
+
     def _update(self):
         """
         Update the position of all shape boxes.

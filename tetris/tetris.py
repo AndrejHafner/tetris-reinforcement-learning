@@ -369,6 +369,26 @@ class Tetris(object):
         self.lines_cleared += curr_lines_cleared
         return curr_lines_cleared
 
+    def perform_action(self, action):
+        """
+        Possible actions:
+            0 - move left 1 tile
+            1 - move right 1 tile
+            2 - rotate clockwise by 90 degrees
+            3 - rotate counter-clockwise by 90 degrees
+            4 - drop piece to end TODO: For now moves down by 1
+        """
+        if action == 0:
+            self.active_block.move(-constants.BWIDTH, 0)
+        if action == 1:
+            self.active_block.move(constants.BWIDTH, 0)
+        if action == 2:
+            self.active_block.rotate_clockwise()
+        if action == 3:
+            self.active_block.rotate_counter_clockwise()
+        if action == 4:
+            # self.pause()
+            self.active_block.move(0, constants.BHEIGHT)
 
     def step(self, action, draw_game=True):
 
@@ -382,9 +402,21 @@ class Tetris(object):
         pygame.event.pump()
 
         # TODO: Apply the action input, for now we just move down
-        self.active_block.move(0, constants.BHEIGHT)
+        self.perform_action(action)
+
         # Border logic, check if we colide with down border or any
         # other border. This check also includes the detection with other tetris blocks.
+        down_board = self.active_block.check_collision([self.board_down])
+        any_border = self.active_block.check_collision([self.board_left, self.board_up, self.board_right])
+        block_any = self.block_colides()
+        # Restore the configuration if any collision was detected
+        if down_board or any_border or block_any:
+            self.active_block.restore()
+
+
+        self.active_block.backup()
+
+        self.active_block.move(0, constants.BHEIGHT)
         down_board = self.active_block.check_collision([self.board_down])
         any_border = self.active_block.check_collision([self.board_left, self.board_up, self.board_right])
         block_any = self.block_colides()

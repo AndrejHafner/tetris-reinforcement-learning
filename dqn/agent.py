@@ -9,7 +9,7 @@ from dqn.utils import ReplayMemory, Transition
 
 class Agent(object):
 
-    def __init__(self, state_size, num_actions, device, replay_memory_size=20000, gamma=0.9, lr=1e-3, eps_start=0.9, eps_end=0.2, eps_decay=200):
+    def __init__(self, state_size, num_actions, device, replay_memory_size=20000, gamma=0.9, lr=1e-3, eps_start=0.9, eps_end=0.2, eps_decay=20000):
         self.current_step = 0
         self.num_actions = num_actions
         self.eps_start = eps_start

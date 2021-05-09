@@ -100,7 +100,9 @@ class Tetris(object):
                     self.active_block.rotate()
                 if ev.key == pygame.K_p:
                     self.pause()
-       
+                if ev.key == pygame.K_d:
+                    self.drop_block()
+
             # Detect if the movement event was fired by the timer.
             if ev.type == constants.TIMER_MOVE_EVENT:
                 self.active_block.move(0,constants.BHEIGHT)
@@ -391,6 +393,17 @@ class Tetris(object):
         if action == 4:
             # self.pause()
             self.active_block.move(0, constants.BHEIGHT)
+
+    def drop_block(self):
+        while True:
+            self.active_block.backup()
+            self.active_block.move(0, constants.BHEIGHT)
+            down_board = self.active_block.check_collision([self.board_down])
+            block_any = self.block_colides()
+
+            if down_board or block_any:
+                self.active_block.restore()
+                break
 
     def check_collisions(self):
         down_board = self.active_block.check_collision([self.board_down])

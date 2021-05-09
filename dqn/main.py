@@ -12,8 +12,10 @@ if __name__ == '__main__':
     num_episodes = 1000
     state_size = 4
     num_actions = 5
-    TARGET_UPDATE = 20
+    TARGET_UPDATE = 10
     batch_size = 512
+    gamma = 0.95
+    train_every_n = 1
 
     # Get the Pytorch device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -24,13 +26,13 @@ if __name__ == '__main__':
     env.init_env()
 
     # Initialize the agent
-    agent = Agent(state_size, num_actions, device)
+    agent = Agent(state_size, num_actions, device, gamma=gamma)
 
     for i_episode in range(num_episodes):
         # Initialize the environment and state
         env.reset_env()
         state = torch.zeros(state_size, device=device)
-        agent.reset()
+        # agent.reset()
         episode_losses = []
 
         for step in count():
@@ -46,10 +48,12 @@ if __name__ == '__main__':
             state = torch.tensor(next_state, device=device, dtype=torch.double)
 
             # Perform one step of the optimization (on the policy network)
-            loss = agent.optimize(batch_size)
 
-            if loss != None:
-                episode_losses.append(loss)
+            if step % train_every_n == 0:
+                loss = agent.optimize(batch_size)
+
+                if loss != None:
+                    episode_losses.append(loss)
 
             if done:
                 print("Stopping episode, next!")

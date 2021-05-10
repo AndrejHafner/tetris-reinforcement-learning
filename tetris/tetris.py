@@ -18,12 +18,13 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import pygame
-
 import random
 import math
 import block
 import constants
 import numpy as np
+
+from constants import BlockType
 
 class Tetris(object):
     """
@@ -57,13 +58,13 @@ class Tetris(object):
         # represents the relative position. The true/false value is used for the configuration of rotation where
         # False means no rotate and True allows the rotation.
         self.block_data = (
-            ([[0,0],[1,0],[2,0],[3,0]],constants.RED,True),     # I block 
-            ([[0,0],[1,0],[0,1],[-1,1]],constants.GREEN,True),  # S block 
-            ([[0,0],[1,0],[2,0],[2,1]],constants.BLUE,True),    # J block
-            ([[0,0],[0,1],[1,0],[1,1]],constants.ORANGE,False), # O block
-            ([[-1,0],[0,0],[0,1],[1,1]],constants.GOLD,True),   # Z block
-            ([[0,0],[1,0],[2,0],[1,1]],constants.PURPLE,True),  # T block
-            ([[0,0],[1,0],[2,0],[0,1]],constants.CYAN,True),    # J block
+            ([[0,0],[1,0],[2,0],[3,0]],constants.RED,True, BlockType.I_BLOCK),     # I block
+            ([[0,0],[1,0],[0,1],[-1,1]],constants.GREEN,True, BlockType.S_BLOCK),  # S block
+            ([[0,0],[1,0],[2,0],[2,1]],constants.BLUE,True, BlockType.L_BLOCK),    # L block
+            ([[0,0],[0,1],[1,0],[1,1]],constants.ORANGE,False, BlockType.O_BLOCK), # O block
+            ([[-1,0],[0,0],[0,1],[1,1]],constants.GOLD,True, BlockType.Z_BLOCK),   # Z block
+            ([[0,0],[1,0],[2,0],[1,1]],constants.PURPLE,True, BlockType.T_BLOCK),  # T block
+            ([[0,0],[1,0],[2,0],[0,1]],constants.CYAN,True, BlockType.J_BLOCK),    # J block
         )
         # Compute the number of blocks. When the number of blocks is even, we can use it directly but 
         # we have to decrese the number of blocks in line by one when the number is odd (because of the used margin).
@@ -101,7 +102,7 @@ class Tetris(object):
                 if ev.key == pygame.K_p:
                     self.pause()
                 if ev.key == pygame.K_d:
-                    self.drop_block()
+                    self.drop_active_block()
 
             # Detect if the movement event was fired by the timer.
             if ev.type == constants.TIMER_MOVE_EVENT:
@@ -152,6 +153,7 @@ class Tetris(object):
             self.get_block()
             self.game_logic()
             self.draw_game()
+            self.get_next_states()
         # Display the game_over and wait for a keypress
         if self.game_over:
             self.print_game_over()
@@ -330,7 +332,7 @@ class Tetris(object):
             # Get the block and add it into the block list(static for now)
             tmp = random.randint(0,len(self.block_data)-1)
             data = self.block_data[tmp]
-            self.active_block = block.Block(data[0],self.start_x,self.start_y,self.screen,data[1],data[2])
+            self.active_block = block.Block(data[0],self.start_x,self.start_y,self.screen, data[1], data[2], data[3])
             self.blk_list.append(self.active_block)
             self.new_block = False
 
@@ -347,7 +349,7 @@ class Tetris(object):
         # Draw the screen buffer
         pygame.display.flip()
 
-    # ==== Below starts logic added for emulating the game, used for RL ====
+    # ======== !!! Below starts logic added for emulating the game, used for RL !!! ========
 
     def remove_lines_emulator(self):
         """
@@ -373,6 +375,29 @@ class Tetris(object):
         self.lines_cleared += curr_lines_cleared
         return curr_lines_cleared
 
+    def get_next_states(self):
+        x_positions = list(range(self.start_x % constants.BWIDTH, self.resx - self.start_x % constants.BWIDTH, constants.BWIDTH))
+        x_offsets = (np.array(x_positions) - self.active_block.x).tolist()
+
+        if self.active_block.type in [BlockType.O_BLOCK]:
+            rotations = [0]
+        elif self.active_block.type in [BlockType.I_BLOCK, BlockType.Z_BLOCK, BlockType.S_BLOCK]:
+            rotations = [0, 90]
+        else:
+            rotations = [0, 90, 180, 270]
+
+        state_action_pairs = {}
+
+        for rotation in rotations:
+            for idx, x in x_positions:
+                backup_cfg = self.active_block.backup_config()
+                self.active_block.rotate_by(rotation)
+                self.active_block.move(x_offsets[idx], 0)
+                self.drop_active_block()
+                # Get the state and store
+                # TODO: Handle lines cleared and fetch the state, then restore state back to original and try another config
+                self.active_block.restore_config(*backup_cfg)
+
     def perform_action(self, action):
         """
         Possible actions:
@@ -380,7 +405,7 @@ class Tetris(object):
             1 - move right 1 tile
             2 - rotate clockwise by 90 degrees
             3 - rotate counter-clockwise by 90 degrees
-            4 - drop piece to end TODO: For now moves down by 1
+            4 - drop piece to end
         """
         if action == 0:
             self.active_block.move(-constants.BWIDTH, 0)
@@ -391,10 +416,9 @@ class Tetris(object):
         if action == 3:
             self.active_block.rotate_counter_clockwise()
         if action == 4:
-            # self.pause()
-            self.active_block.move(0, constants.BHEIGHT)
+            self.drop_active_block()
 
-    def drop_block(self):
+    def drop_active_block(self):
         while True:
             self.active_block.backup()
             self.active_block.move(0, constants.BHEIGHT)

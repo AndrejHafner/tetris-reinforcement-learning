@@ -19,6 +19,7 @@
 
 
 from pygame.locals import *
+from enum import Enum
 
 # Configuration of building shape block
 # Width of the shape block
@@ -67,3 +68,12 @@ POINT_MARGIN      = 10
 
 # Font size for all strings (score, pause, game over)
 FONT_SIZE           = 25
+
+class BlockType(Enum):
+    I_BLOCK = "I_BLOCK"
+    S_BLOCK = "S_BLOCK"
+    L_BLOCK = "L_BLOCK"
+    O_BLOCK = "O_BLOCK"
+    Z_BLOCK = "Z_BLOCK"
+    T_BLOCK = "T_BLOCK"
+    J_BLOCK = "J_BLOCK"

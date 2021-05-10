@@ -30,7 +30,7 @@ class Block(object):
     Class for handling of tetris block
     """    
 
-    def __init__(self,shape,x,y,screen,color,rotate_en):
+    def __init__(self,shape,x,y,screen,color,rotate_en, type):
         """
         Initialize the tetris block class
 
@@ -63,6 +63,7 @@ class Block(object):
         self.color = color
         # Rotation of the screen
         self.diff_rotation = 0
+        self.type = type
 
     def draw(self):
         """
@@ -142,6 +143,16 @@ class Block(object):
             self.diff_rotation = 90
             self._update()
 
+    def rotate_by(self, deg):
+        """
+        Setup the rotation value to deg degrees.
+        """
+        # Setup the rotation and update coordinates of all shape blocks.
+        # The block is rotated iff the rotation is enabled
+        if self.rotate_en:
+            self.diff_rotation = deg
+            self._update()
+
     def rotate_clockwise(self):
         """
         Setup the rotation value to 90 degrees.
@@ -195,7 +206,14 @@ class Block(object):
         self.shape_copy = copy.deepcopy(self.shape)
         self.x_copy = self.x
         self.y_copy = self.y
-        self.rotation_copy = self.diff_rotation     
+        self.rotation_copy = self.diff_rotation
+
+    def backup_config(self):
+        shape_backup = copy.deepcopy(self.shape)
+        x_backup = self.x
+        y_backup = self.y
+        rotation_backup = self.diff_rotation
+        return shape_backup, x_backup, y_backup, rotation_backup
 
     def restore(self):
         """
@@ -205,6 +223,12 @@ class Block(object):
         self.x = self.x_copy
         self.y = self.y_copy
         self.diff_rotation = self.rotation_copy
+
+    def restore_config(self, shape_backup, x_backup, y_backup, rotation_backup):
+        self.shape = shape_backup
+        self.x = x_backup
+        self.y = y_backup
+        self.diff_rotation = rotation_backup
 
     def check_collision(self,rect_list):
         """

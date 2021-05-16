@@ -16,6 +16,8 @@
 # 
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+import time
+from collections import defaultdict
 
 import pygame
 import random
@@ -77,6 +79,9 @@ class Tetris(object):
         # The score level threshold
         self.score_level = constants.SCORE_LEVEL
         self.lines_cleared = 0
+        self.x_positions = list(range(self.start_x % constants.BWIDTH, self.resx - self.start_x % constants.BWIDTH, constants.BWIDTH))
+        self.y_positions = list(range(self.start_y % constants.BHEIGHT, self.resy - self.start_y % constants.BHEIGHT, constants.BHEIGHT))
+        self.possible_block_states = defaultdict(list)
 
 
     def apply_action(self):
@@ -153,7 +158,6 @@ class Tetris(object):
             self.get_block()
             self.game_logic()
             self.draw_game()
-            self.get_next_states()
         # Display the game_over and wait for a keypress
         if self.game_over:
             self.print_game_over()
@@ -313,7 +317,7 @@ class Tetris(object):
                 tmp_cnt += (1 if y == shape_block.y else 0)            
         return tmp_cnt
 
-    def draw_board(self):
+    def draw_board(self, draw_status=True):
         """
         Draw the white board.
         """
@@ -321,8 +325,9 @@ class Tetris(object):
         pygame.draw.rect(self.screen,constants.WHITE,self.board_down)
         pygame.draw.rect(self.screen,constants.WHITE,self.board_left)
         pygame.draw.rect(self.screen,constants.WHITE,self.board_right)
-        # Update the score         
-        self.print_status_line()
+        # Update the score
+        if draw_status:
+            self.print_status_line()
 
     def get_block(self):
         """
@@ -336,20 +341,34 @@ class Tetris(object):
             self.blk_list.append(self.active_block)
             self.new_block = False
 
-    def draw_game(self):
+    def draw_game(self, draw_status=True):
         """
         Draw the game screen.
         """
         # Clean the screen, draw the board and draw
         # all tetris blocks
         self.screen.fill(constants.BLACK)
-        self.draw_board()
+        self.draw_board(draw_status=draw_status)
         for blk in self.blk_list:
             blk.draw()
         # Draw the screen buffer
         pygame.display.flip()
 
     # ======== !!! Below starts logic added for emulating the game, used for RL !!! ========
+
+    def draw_game_rl(self, episode, loss, episode_reward):
+        """
+        Draw the game screen.
+        """
+        # Clean the screen, draw the board and draw
+        # all tetris blocks
+        self.screen.fill(constants.BLACK)
+        self.draw_board(draw_status=False)
+        self.print_learning_status(episode=episode, loss=loss, episode_reward=episode_reward)
+        for blk in self.blk_list:
+            blk.draw()
+        # Draw the screen buffer
+        pygame.display.flip()
 
     def remove_lines_emulator(self):
         """
@@ -375,50 +394,88 @@ class Tetris(object):
         self.lines_cleared += curr_lines_cleared
         return curr_lines_cleared
 
+    def get_potential_lines_cleared(self):
+        lines_cleared = 0
+        for shape_block in self.active_block.shape:
+            tmp_y = shape_block.y
+            tmp_cnt = self.get_blocks_in_line(tmp_y)
+            # Detect if the line contains the given number of blocks
+            if tmp_cnt != self.blocks_in_line:
+                continue
+            lines_cleared += 1
+
+        return lines_cleared
+
+    def create_possible_block_states(self):
+        x_positions_set = set(self.x_positions)
+
+        for blk in self.block_data:
+            self.active_block = block.Block(blk[0],self.start_x,self.start_y,self.screen, blk[1], blk[2], blk[3])
+            self.blk_list.append(self.active_block)
+
+            x_offsets = (np.array(self.x_positions) - self.active_block.x).tolist()
+
+            if self.active_block.type in [BlockType.O_BLOCK]:
+                rotations = [0]
+            elif self.active_block.type in [BlockType.I_BLOCK, BlockType.S_BLOCK, BlockType.Z_BLOCK]:
+                rotations = [0, 90]
+            else:
+                rotations = [0, 90, 180, 270]
+
+
+            for rotation in rotations:
+                for x_idx, x in enumerate(self.x_positions):
+                    backup_cfg = self.active_block.backup_config()
+
+                    self.active_block.rotate_by(rotation)
+                    self.active_block.move(x_offsets[x_idx], 0)
+                    active_block_rects = set([el.x for el in self.active_block.shape])
+
+                    # If the block collided after movement move on
+                    if self.active_block.check_collision([self.board_left, self.board_right, self.board_down]) \
+                            or len(active_block_rects - x_positions_set) > 0:
+                        self.active_block.restore_config(*backup_cfg)
+                        continue
+
+                    self.drop_active_block()
+
+                    # tore
+                    self.possible_block_states[blk[3]].append((x, x_idx, rotation))
+
+                    # Restore the original config
+                    self.active_block.restore_config(*backup_cfg)
+
+            self.blk_list.clear()
+
     def get_next_states(self):
-        x_positions = list(range(self.start_x % constants.BWIDTH, self.resx - self.start_x % constants.BWIDTH, constants.BWIDTH))
-        x_offsets = (np.array(x_positions) - self.active_block.x).tolist()
-
-        if self.active_block.type in [BlockType.O_BLOCK]:
-            rotations = [0]
-        elif self.active_block.type in [BlockType.I_BLOCK, BlockType.Z_BLOCK, BlockType.S_BLOCK]:
-            rotations = [0, 90]
-        else:
-            rotations = [0, 90, 180, 270]
-
+        x_offsets = (np.array(self.x_positions) - self.active_block.x).tolist()
         state_action_pairs = {}
 
-        for rotation in rotations:
-            for idx, x in x_positions:
+        for x, x_idx, rotation in self.possible_block_states[self.active_block.type]:
+                # Backup the current store
                 backup_cfg = self.active_block.backup_config()
                 self.active_block.rotate_by(rotation)
-                self.active_block.move(x_offsets[idx], 0)
+                self.active_block.move(x_offsets[x_idx], 0)
                 self.drop_active_block()
+
                 # Get the state and store
-                # TODO: Handle lines cleared and fetch the state, then restore state back to original and try another config
+                lines_cleared = self.get_potential_lines_cleared()
+                state = self.get_game_state(lines_cleared, skip_active_block=False)
+                state_action_pairs[(x, rotation)] = state
+                # Restore the original config
                 self.active_block.restore_config(*backup_cfg)
 
-    def perform_action(self, action):
-        """
-        Possible actions:
-            0 - move left 1 tile
-            1 - move right 1 tile
-            2 - rotate clockwise by 90 degrees
-            3 - rotate counter-clockwise by 90 degrees
-            4 - drop piece to end
-        """
-        if action == 0:
-            self.active_block.move(-constants.BWIDTH, 0)
-        if action == 1:
-            self.active_block.move(constants.BWIDTH, 0)
-        if action == 2:
-            self.active_block.rotate_clockwise()
-        if action == 3:
-            self.active_block.rotate_counter_clockwise()
-        if action == 4:
-            self.drop_active_block()
+        return state_action_pairs
 
-    def drop_active_block(self):
+    def perform_action(self, x, rotation):
+        x_offsets = (np.array(self.x_positions) - self.active_block.x).tolist()
+        offset_index = self.x_positions.index(x)
+        offset = x_offsets[offset_index]
+
+        self.active_block.rotate_by(rotation)
+        self.active_block.move(offset, 0)
+
+    def drop_active_block(self, episode=None, loss=None, episode_reward=None, draw=False):
         while True:
             self.active_block.backup()
             self.active_block.move(0, constants.BHEIGHT)
@@ -428,6 +485,10 @@ class Tetris(object):
             if down_board or block_any:
                 self.active_block.restore()
                 break
+            if draw:
+                time.sleep(0.000001)
+                self.draw_game_rl(episode, loss, episode_reward)
+
 
     def check_collisions(self):
         down_board = self.active_block.check_collision([self.board_down])
@@ -435,7 +496,7 @@ class Tetris(object):
         block_any = self.block_colides()
         return down_board, any_border, block_any
 
-    def step(self, action, draw_game=True):
+    def step(self, x, rotation, episode, loss, episode_reward, draw_game=True):
 
         self.reward = 0
         # Generate a new block into the game if required
@@ -444,25 +505,37 @@ class Tetris(object):
         # Handle the events to allow pygame to handle internal actions
         pygame.event.pump()
 
+
+
         # Remember the current configuration and try to
         # Apply the action supplied by the agent
         self.active_block.backup()
-        self.perform_action(action)
-        down_board, any_border, block_any = self.check_collisions()
-        if down_board or any_border or block_any:
+        self.perform_action(x, rotation)
+
+        can_move_down = not self.block_colides()
+        if not can_move_down:
+            self.game_over = True
+            state = self.get_game_state(0)
+            return state, -10, self.game_over
+
+        self.drop_active_block(episode, loss, episode_reward, draw=True)
+        _, any_border, block_any = self.check_collisions()
+        if any_border or block_any:
             self.active_block.restore()
 
         # Move down by one each step - no matter what
-        self.active_block.backup()
-        self.active_block.move(0, constants.BHEIGHT)
-        down_board, any_border, block_any = self.check_collisions()
-        if down_board or any_border or block_any:
-            self.active_block.restore()
+        # self.active_block.backup()
+        # self.active_block.move(0, constants.BHEIGHT)
+        # down_board, any_border, block_any = self.check_collisions()
+        # if down_board or any_border or block_any:
+        #     self.active_block.restore()
 
         self.active_block.backup()
         self.active_block.move(0, constants.BHEIGHT)
         can_move_down = not self.block_colides()
+        down_board, any_border, block_any = self.check_collisions()
         self.active_block.restore()
+        # down_board, any_border, block_any = self.check_collisions()
         # We end the game if we are on the respawn and we cannot move --> bang!
         if not can_move_down and (self.start_x == self.active_block.x and self.start_y == self.active_block.y):
             self.game_over = True
@@ -472,6 +545,7 @@ class Tetris(object):
         if down_board or not can_move_down:
             # Request new block
             self.new_block = True
+
             # A block was placed --> add 1 reward point
             self.reward += 1
             # Detect the filled line and possibly remove the line from the
@@ -479,41 +553,41 @@ class Tetris(object):
             current_lines_cleared = self.remove_lines_emulator()
 
             # Add the reward for lines cleared
-            self.reward += current_lines_cleared**2 * self.bx
+            self.reward += (2*current_lines_cleared)**2 * self.bx
 
-        if draw_game: self.draw_game()
+        if draw_game: self.draw_game_rl(episode, loss, episode_reward)
 
         done = self.done or self.game_over
         if done:
             self.reward -= 1
         state = self.get_game_state(current_lines_cleared)
-
+        self.get_block()
         return state, self.reward, done
 
-    def get_game_state(self, lines_cleared):
-        grid = self.get_game_grid()
+    def get_game_state(self, lines_cleared, skip_active_block=True):
+        grid = self.get_game_grid(skip_active_block=skip_active_block)
         agg_height = self.aggregate_height(grid)
         n_holes = self.number_of_holes(grid)
-        bumpiness = self.bumpiness(grid)
-        return np.array([agg_height, n_holes, bumpiness, lines_cleared])
+        bumpiness, _, _ = self.bumpiness(grid)
+        block_type = [idx for idx, el in enumerate(self.block_data) if el[3] == self.active_block.type][0]
+        return np.array([agg_height, n_holes, bumpiness, lines_cleared, block_type])
 
-    def get_game_grid(self):
-        x_coords = list(range(self.start_x % constants.BWIDTH, self.resx - self.start_x % constants.BWIDTH, constants.BWIDTH))
-        y_coords = list(range(self.start_y % constants.BHEIGHT, self.resy - self.start_y % constants.BHEIGHT, constants.BHEIGHT))
-        grid = np.zeros((len(y_coords), len(x_coords)), dtype=np.int)
+    def get_game_grid(self, skip_active_block=True):
+        grid = np.zeros((len(self.y_positions), len(self.x_positions)), dtype=np.int)
         try:
             for block in self.blk_list:
                 # Skip the active block when building the grid
-                if block.x == self.active_block.x and block.y == self.active_block.y:
+                if skip_active_block and block.x == self.active_block.x and block.y == self.active_block.y:
                     continue
 
                 for block_shape in block.shape:
-                    x_grid_idx = x_coords.index(block_shape.x)
-                    y_grid_idx = y_coords.index(block_shape.y)
+                    x_grid_idx = self.x_positions.index(block_shape.x)
+                    y_grid_idx = self.y_positions.index(block_shape.y)
                     grid[y_grid_idx, x_grid_idx] = 1
         except Exception as e:
             print(e)
-            print("uhoh", x_coords, y_coords)
+            print(self.x_positions)
+            print(self.y_positions)
 
         return grid
 
@@ -549,8 +623,10 @@ class Tetris(object):
                 y_height = grid.shape[0] - y_coord
                 agg_height_arr[x] = y_height
 
-        bumpiness = np.abs(np.diff(agg_height_arr))
-        return np.sum(bumpiness)
+        max_height = np.max(agg_height_arr)
+        min_height = np.min(agg_height_arr)
+        bumpiness = np.diff(agg_height_arr)**2
+        return np.sum(bumpiness), max_height, min_height
 
     def init_env(self):
         # Initialize the game (pygame, fonts)
@@ -559,6 +635,8 @@ class Tetris(object):
         self.myfont = pygame.font.SysFont(pygame.font.get_default_font(), constants.FONT_SIZE)
         self.screen = pygame.display.set_mode((self.resx, self.resy))
         pygame.display.set_caption("Tetris")
+        self.create_possible_block_states()
+
         # Setup the time to fire the move event every given time
         # self.set_move_timer()
         # Control variables for the game. The done signal is used
@@ -569,11 +647,17 @@ class Tetris(object):
         self.game_over = False
         self.new_block = True
         # Print the initial score
-        self.print_status_line()
+        # self.print_status_line()
         self.lines_cleared = 0
         self.reward = 0
+        self.get_block()
 
-
+    def print_learning_status(self, episode=None, loss=None, episode_reward=None):
+        """
+        Print the current state line
+        """
+        string = ["Episode: {0} Reward: {1}".format(episode, episode_reward)]
+        self.print_text(string,constants.POINT_MARGIN,constants.POINT_MARGIN)
 
     def reset_env(self):
         self.lines_cleared = 0
@@ -583,6 +667,8 @@ class Tetris(object):
         self.done = False
         self.game_over = False
         self.new_block = True
+        self.get_block()
+
 
 if __name__ == "__main__":
     Tetris(16,30).run()

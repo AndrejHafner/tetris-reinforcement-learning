@@ -6,8 +6,11 @@ import numpy as np
 import torch
 import os
 
-from dqn.agent import Agent
+from dqcnn.agent import Agent
 from tetris.tetris import Tetris
+
+GRID_HEIGHT = 30
+GRID_WIDTH = 16
 
 if __name__ == '__main__':
 
@@ -34,44 +37,55 @@ if __name__ == '__main__':
     print("Device: ", device)
 
     # Initialize the environment
-    env = Tetris(16, 30)
+    env = Tetris(GRID_WIDTH, GRID_HEIGHT)
     env.init_env()
     loss = -1
     best_episode_reward = 0
 
     # Initialize the agent
-    agent = Agent(state_size, device, gamma=gamma, policy_net_path=policy_net_path, eps_start=eps_start, eps_end=eps_end, eps_decay=eps_decay, lr=lr)
+    agent = Agent(GRID_WIDTH, GRID_HEIGHT, device, gamma=gamma, policy_net_path=policy_net_path, eps_start=eps_start, eps_end=eps_end, eps_decay=eps_decay, lr=lr)
     for i_episode in range(num_episodes):
         # Initialize the environment and state
         env.reset_env()
-        state = torch.zeros(state_size, device=device)
-        # agent.reset()
+        last_grid_state = env.get_initial_grid_state()
+        current_grid_state = env.get_initial_grid_state()
+        state = current_grid_state - last_grid_state
+
         episode_losses = []
         reward_sum = 0
 
         draw_sim = i_episode % draw_every == 0
         episode_start = time.time()
         for step in count():
-            # Select and perform an action
-            state_action_pairs = env.get_next_states()
-
-            action = agent.select_action(state_action_pairs, i_episode)
-            next_state, reward, done = env.step(*action, i_episode, loss, reward_sum, draw_game=draw_sim)
+            possible_grid_states = env.get_next_grid_states(current_grid_state)
+            action = agent.select_action(possible_grid_states, i_episode)
+            _, reward, done = env.step(*action, i_episode, loss, reward_sum, draw_game=draw_sim)
             reward = torch.tensor([reward], device=device)
             reward_sum += reward.item()
 
+            # Observe new state
+            last_grid_state =  current_grid_state
+            current_grid_state = env.get_game_grid_state()
+
+            if not done:
+                next_state = current_grid_state - last_grid_state
+            else:
+                next_state = None
+
             # Store the transition in memory
-            agent.add_to_memory(state, torch.tensor(action, device=device), torch.tensor(next_state, device=device), reward)
+            agent.add_to_memory(state, torch.tensor(action, device=device), next_state, reward)
 
             # Move to the next state
-            state = torch.tensor(next_state, device=device, dtype=torch.double)
+            state = next_state
 
             # Perform one step of the optimization (on the policy network)
             if done:
                 print("Stopping episode, next!")
                 break
+            loss = agent.optimize(batch_size)
+
         if i_episode % train_every_n == 0 and train:
-            loss = agent.optimize(batch_size, i_episode)
+            loss = agent.optimize(batch_size)
 
         loss = round(loss if loss != None else -1, 3)
         print("Episode loss:", loss)

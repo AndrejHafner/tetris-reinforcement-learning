@@ -66,17 +66,17 @@ class Agent(object):
         non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
 
         state_batch = torch.cat(batch.state)
-        # action_batch = torch.cat(batch.action)
-        # action_batch = torch.stack(batch.action).unsqueeze(0)
         reward_batch = torch.cat(batch.reward)
+        next_state_batch = torch.cat(batch.state)
+
 
         state_action_values = self.policy_net(state_batch)
-        # state_action_values = state_action_values.gather(1, action_batch)
-        next_state_values = torch.zeros(batch_size, device=self.device)
-        next_state_values[non_final_mask] = self.target_net(non_final_next_states).max(1)[0].detach()
+        # next_state_values = torch.zeros(batch_size, device=self.device)
+        next_state_values = self.target_net(next_state_batch).max(1)[0].detach()
 
         # Compute the expected Q values
-        expected_state_action_values = (next_state_values * self.gamma) + reward_batch
+        # expected_state_action_values = (next_state_values * self.gamma) + reward_batch
+        expected_state_action_values = reward_batch + (self.gamma * next_state_values)
 
         # Compute loss
         loss = self.criterion(state_action_values, expected_state_action_values.unsqueeze(1))

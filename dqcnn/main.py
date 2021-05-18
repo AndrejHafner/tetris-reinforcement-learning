@@ -20,7 +20,7 @@ if __name__ == '__main__':
     num_episodes = 3000
     state_size = 5
     num_actions = 5
-    TARGET_UPDATE = 1
+    TARGET_UPDATE = 5
     batch_size = 512
     gamma = 0.95
     train_every_n = 1
@@ -67,10 +67,11 @@ if __name__ == '__main__':
             last_grid_state =  current_grid_state
             current_grid_state = env.get_game_grid_state()
 
-            if not done:
-                next_state = current_grid_state - last_grid_state
-            else:
-                next_state = None
+            # if not done:
+            #     next_state = current_grid_state - last_grid_state
+            # else:
+            #     next_state = None
+            next_state = current_grid_state - last_grid_state
 
             # Store the transition in memory
             agent.add_to_memory(state, torch.tensor(action, device=device), next_state, reward)

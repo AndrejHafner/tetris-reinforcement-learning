@@ -18,13 +18,18 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 import time
 from collections import defaultdict
-
 import pygame
 import random
 import math
 import block
 import constants
 import numpy as np
+import cv2
+import torch
+import torchvision.transforms as T
+from PIL import Image
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
 
 from constants import BlockType
 
@@ -33,7 +38,7 @@ class Tetris(object):
     The class with implementation of tetris game logic.
     """
 
-    def __init__(self,bx,by):
+    def __init__(self, bx, by):
         """
         Initialize the tetris object.
 
@@ -56,7 +61,7 @@ class Tetris(object):
         # Compute start indexes for tetris blocks
         self.start_x = math.ceil(self.resx/2.0)
         self.start_y = constants.BOARD_UP_MARGIN + constants.BOARD_HEIGHT + constants.BOARD_MARGIN
-        # Blocka data (shapes and colors). The shape is encoded in the list of [X,Y] points. Each point
+        # Block data (shapes and colors). The shape is encoded in the list of [X,Y] points. Each point
         # represents the relative position. The true/false value is used for the configuration of rotation where
         # False means no rotate and True allows the rotation.
         self.block_data = (
@@ -452,18 +457,66 @@ class Tetris(object):
         state_action_pairs = {}
 
         for x, x_idx, rotation in self.possible_block_states[self.active_block.type]:
-                # Backup the current store
-                backup_cfg = self.active_block.backup_config()
-                self.active_block.rotate_by(rotation)
-                self.active_block.move(x_offsets[x_idx], 0)
-                self.drop_active_block()
+            # Backup the current store
+            backup_cfg = self.active_block.backup_config()
+            self.active_block.rotate_by(rotation)
+            self.active_block.move(x_offsets[x_idx], 0)
+            self.drop_active_block()
 
-                # Get the state and store
-                lines_cleared = self.get_potential_lines_cleared()
-                state = self.get_game_state(lines_cleared, skip_active_block=False)
-                state_action_pairs[(x, rotation)] = state
-                # Restore the original config
-                self.active_block.restore_config(*backup_cfg)
+            # Get the state and store
+            lines_cleared = self.get_potential_lines_cleared()
+            state = self.get_game_state(lines_cleared, skip_active_block=False)
+            state_action_pairs[(x, rotation)] = state
+            # Restore the original config
+            self.active_block.restore_config(*backup_cfg)
+
+        return state_action_pairs
+
+    def get_next_display_states(self, display_state, draw_states=False):
+        x_offsets = (np.array(self.x_positions) - self.active_block.x).tolist()
+        state_action_pairs = {}
+
+        for x, x_idx, rotation in self.possible_block_states[self.active_block.type]:
+            # Backup the current store
+            backup_cfg = self.active_block.backup_config()
+            self.active_block.rotate_by(rotation)
+            self.active_block.move(x_offsets[x_idx], 0)
+            self.drop_active_block()
+            self.draw_game()
+
+            # Get the state and store   
+            state = self.get_display_state() - display_state
+            state_action_pairs[(x, rotation)] = state
+
+            if draw_states:
+                plt.figure()
+                plt.imshow(state.cpu().squeeze(0).permute(1, 2, 0).numpy(), interpolation='none', cmap='gray')
+                plt.show()
+
+            # Restore the original config
+            self.active_block.restore_config(*backup_cfg)
+            self.draw_game()
+
+        return state_action_pairs
+
+    def get_next_grid_states(self, grid_state):
+        x_offsets = (np.array(self.x_positions) - self.active_block.x).tolist()
+        state_action_pairs = {}
+
+        for x, x_idx, rotation in self.possible_block_states[self.active_block.type]:
+            # Backup the current store
+            backup_cfg = self.active_block.backup_config()
+            self.active_block.rotate_by(rotation)
+            self.active_block.move(x_offsets[x_idx], 0)
+            self.drop_active_block()
+
+            # Get the state and store 
+            new_state = self.get_game_grid_state(skip_active_block=False)
+            state = new_state - grid_state
+            state_action_pairs[(x, rotation)] = state
+
+            # Restore the original config
+            self.active_block.restore_config(*backup_cfg)
 
         return state_action_pairs
 
@@ -495,6 +548,32 @@ class Tetris(object):
         any_border = self.active_block.check_collision([self.board_left, self.board_up, self.board_right])
         block_any = self.block_colides()
         return down_board, any_border, block_any
+
+    def get_display_state(self):
+        resize = T.Compose([T.ToPILImage(),
+                 T.Resize(40, interpolation=Image.CUBIC),
+                 T.ToTensor()])
+
+        display = pygame.surfarray.array3d(pygame.display.get_surface())
+        display = display.transpose([1, 0, 2])
+
+        # Convert to grayscale.
+        display = cv2.cvtColor(display, cv2.COLOR_BGR2GRAY)
+        display[display > 0] = 255
+        
+        # Remove score board and edges.
+        img_h, img_w = display.shape
+        display = display[
+            constants.BOARD_UP_MARGIN + constants.BOARD_HEIGHT:img_h - constants.BOARD_HEIGHT,
+            constants.BOARD_HEIGHT:img_w - constants.BOARD_HEIGHT
+        ]
+
+        display = np.ascontiguousarray(display, dtype=np.float32) / 255
+        display = torch.from_numpy(display)
+        display = resize(display).unsqueeze(0)
+        display = display.permute(1, 0, 2, 3)
+
+        return display
 
     def step(self, x, rotation, episode, loss, episode_reward, draw_game=True):
 
@@ -584,12 +663,27 @@ class Tetris(object):
                     x_grid_idx = self.x_positions.index(block_shape.x)
                     y_grid_idx = self.y_positions.index(block_shape.y)
                     grid[y_grid_idx, x_grid_idx] = 1
+
         except Exception as e:
             print(e)
             print(self.x_positions)
             print(self.y_positions)
 
         return grid
+
+    def get_game_grid_state(self, skip_active_block=True):
+        game_grid_state = self.get_game_grid(skip_active_block)
+        game_grid_state = np.ascontiguousarray(game_grid_state, dtype=np.float32) / 255
+        game_grid_state = torch.from_numpy(game_grid_state).unsqueeze(0).unsqueeze(0)
+
+        return game_grid_state
+
+    def get_initial_grid_state(self):
+        initial_grid = np.zeros((len(self.y_positions), len(self.x_positions)), dtype=np.int)
+        initial_grid = np.ascontiguousarray(initial_grid, dtype=np.float32) / 255
+        initial_grid = torch.from_numpy(initial_grid).unsqueeze(0).unsqueeze(0)
+
+        return initial_grid
 
     def aggregate_height(self, grid):
         agg_height = 0
@@ -599,6 +693,7 @@ class Tetris(object):
                 y_coord = top_y[0][0]
                 y_height = grid.shape[0] - y_coord
                 agg_height += y_height
+
         return agg_height
 
     def number_of_holes(self, grid):
@@ -626,6 +721,7 @@ class Tetris(object):
         max_height = np.max(agg_height_arr)
         min_height = np.min(agg_height_arr)
         bumpiness = np.diff(agg_height_arr)**2
+
         return np.sum(bumpiness), max_height, min_height
 
     def init_env(self):
@@ -668,7 +764,6 @@ class Tetris(object):
         self.game_over = False
         self.new_block = True
         self.get_block()
-
 
 if __name__ == "__main__":
     Tetris(16,30).run()

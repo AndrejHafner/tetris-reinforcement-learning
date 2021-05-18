@@ -42,29 +42,10 @@ class Agent(object):
         else:
             with torch.no_grad():
                 state_action_map = {idx: key for idx, key in enumerate(state_action_pairs.keys())}
-                print("STATE ACTIONS: ")
-                print(state_action_map)
-
                 states = torch.tensor(np.vstack(list(state_action_pairs.values())), device=self.device)
-
-                print("STATES: ")
-                print(states)
                 prediction = self.policy_net(states.float()) # Exploitation
-
-                print("PREDICTION: ")
-                print(prediction)
-
                 max_idx = prediction.argmax(dim=0)
-
-                print("MAX_IDX: ")
-                print(max_idx)
-                print(max_idx.item())
-
                 action = state_action_map[max_idx.item()]
-
-                print("ACTION: ")
-                print(action)
-
                 return action
 
     def optimize(self, batch_size, iteration):
@@ -76,8 +57,6 @@ class Agent(object):
         batch = Transition(*zip(*transitions))
 
         state_batch = torch.vstack(batch.state)
-        action_batch = torch.cat(batch.action)
-        print(action_batch)
         action_batch = torch.stack(batch.action).unsqueeze(1)
         reward_batch = torch.cat(batch.reward)
         next_state_batch = torch.vstack(batch.next_state)

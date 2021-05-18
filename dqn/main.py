@@ -10,17 +10,17 @@ from tetris.tetris import Tetris
 
 if __name__ == '__main__':
 
-    num_episodes = 3000
+    num_episodes = 2500
     state_size = 5
     num_actions = 5
-    TARGET_UPDATE = 1
+    TARGET_UPDATE = 3
     batch_size = 512
     gamma = 0.95
     train_every_n = 1
     draw_every = 1
-    eps_decay = 250
+    eps_decay = 300
     eps_start = 0.99
-    eps_end = 0.01
+    eps_end = 0.0
     lr = 1e-3
     train = True
     policy_net_path = None # "./dqn_checkpoint_mse_almost_perfect.pth"
@@ -63,12 +63,10 @@ if __name__ == '__main__':
             state = torch.tensor(next_state, device=device, dtype=torch.double)
 
             # Perform one step of the optimization (on the policy network)
-
-
-
             if done:
                 print("Stopping episode, next!")
                 break
+
         if i_episode % train_every_n == 0 and train:
             loss = agent.optimize(batch_size, i_episode)
 
